@@ -116,14 +116,14 @@ void draw_menu(int rows, int cols, int cursor) {
 
 void execute_command(int cursor) {
     endwin();
-    FILE *log = fopen("/tmp/bootloader.log", "a");
+    FILE *log = fopen("$HOME/tmp/bootloader.log", "a");
     if (log) {
         fprintf(log, "Executing: %s\n", COMMANDS[cursor]);
         fclose(log);
     }
     int result = system(COMMANDS[cursor]);
     if (result != 0) {
-        FILE *log = fopen("/tmp/bootloader.log", "a");
+        FILE *log = fopen("$HOME/tmp/bootloader.log", "a");
         if (log) {
             fprintf(log, "Command failed with exit code %d\n", result);
             fclose(log);
