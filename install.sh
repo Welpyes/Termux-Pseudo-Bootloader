@@ -11,7 +11,7 @@ wget "https://github.com/Welpyes/Termux-Pseudo-Bootloader/releases/download/Rele
 
 chmod +x $PATH/bootloader
 
-mkdir .config/bootloader
+mkdir $HOME/.config/bootloader
 
 cd $HOME/.config/bootloader
 
