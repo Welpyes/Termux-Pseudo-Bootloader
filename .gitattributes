@@ -1,1 +1,3 @@
 *.sh linguist-vendored
+startx linguist-vendored
+install.sh linguist-vendored
