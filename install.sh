@@ -13,13 +13,15 @@ chmod +x $PATH/bootloader
 
 mkdir .config/bootloader
 
-cd ~/.config/bootloader
+cd $HOME/.config/bootloader
 
 wget "https://raw.githubusercontent.com/Welpyes/Termux-Pseudo-Bootloader/refs/heads/main/bootloader.ini"
 
-wget "https://github.com/Welpyes/Termux-Pseudo-Bootloader/raw/refs/heads/main/startx"
+wget "https://raw.githubusercontent.com/Welpyes/Termux-Pseudo-Bootloader/refs/heads/main/startx"
 
 chmod +x startx
+
+cd $HOME
 
 # Check if startx exists
 if [ ! -f "$STARTX_FILE" ]; then
