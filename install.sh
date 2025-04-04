@@ -12,9 +12,9 @@ wget "https://github.com/Welpyes/Termux-Pseudo-Bootloader/releases/download/Rele
 
 chmod +x $PATH/bootloader
 
-mkdir $HOME/.config/bootloader -p
+mkdir "$HOME/.config/bootloader" -p
 
-cd $HOME/.config/bootloader
+cd "$HOME/.config/bootloader"
 
 wget "https://raw.githubusercontent.com/Welpyes/Termux-Pseudo-Bootloader/refs/heads/main/bootloader.ini"
 
