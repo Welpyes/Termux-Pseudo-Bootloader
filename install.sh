@@ -24,31 +24,29 @@ chmod +x startx
 
 cd $HOME 
 
-# Check if startx exists
+# File checker(just for debuggings)
 if [ ! -f "$STARTX_FILE" ]; then
     echo "Error: $STARTX_FILE not found"
     exit 1
 fi
 
-# Prompt for username
 read -p "Enter your username: " username
 if [ -z "$username" ]; then
     echo "Error: Username cannot be empty"
     exit 1
 fi
 
-# Prompt for desktop environment
 read -p "Enter your desktop environment (e.g., bspwm, xfce4-session): " desktop_env
 if [ -z "$desktop_env" ]; then
     echo "Error: Desktop environment cannot be empty"
     exit 1
 fi
 
-# Backup the original startx file
+# backups
 cp "$STARTX_FILE" "$STARTX_FILE.bak"
 echo "Backup created at $STARTX_FILE.bak"
 
-# Replace the su command with username and desktop environment
+# i aint using regex dawg 😭🙏
 sed -i "s|su - -c \"env DISPLAY=:0 \"|su - $username -c \"env DISPLAY=:0 $desktop_env\"|" "$STARTX_FILE"
 
 if [ $? -eq 0 ]; then
@@ -58,7 +56,6 @@ else
     exit 1
 fi
 
-# Verify the change
 grep "su - $username -c \"env DISPLAY=:0 $desktop_env\"" "$STARTX_FILE" > /dev/null
 if [ $? -eq 0 ]; then
     echo "Verification: Change applied correctly"
