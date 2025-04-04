@@ -6,7 +6,7 @@ STARTX_FILE="$HOME/.config/bootloader/startx"
 
 cd $PATH
 
-pkg i wget -y
+pkg i wget ncurses-utils -y
 
 wget "https://github.com/Welpyes/Termux-Pseudo-Bootloader/releases/download/Release/bootloader" 
 
