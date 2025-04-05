@@ -133,3 +133,4 @@ run_startup() {
 
 run_startup
 
+bash "$HOME/.config/bootloader/proot"
