@@ -132,5 +132,5 @@ run_startup() {
 }
 
 run_startup
-
-bash "$HOME/.config/bootloader/proot"
+(sleep 1 && bash "$HOME/.config/bootloader/proot" > /dev/null 2>&1) &
+env dm
