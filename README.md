@@ -1,11 +1,17 @@
 # Termux-Pseudo-Bootloader
 A rewrite of my 'pseudo systemd bootloader bash script' to the C programming language 
 
-installation 
+dependencies:
 ```
-curl -o install.sh "https://raw.githubusercontent.com/Welpyes/Termux-Pseudo-Bootloader/refs/heads/main/install.sh" && bash install.sh && rm -f install.sh
+pkg update && pkg upgrade
+pkg install ncurses libyaml clang make
 ```
-uninstallation
+
+compile:
 ```
-rm -rf $HOME/.config/bootloader && rm -f $PATH/bootloader
+cd ~
+git clone https://github.com/Welpyes/Termux-Pseudo-Bootloader
+cd $HOME/Termux-Pseudo-Bootloader
+make
 ```
+
