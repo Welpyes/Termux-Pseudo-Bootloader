@@ -15,3 +15,4 @@ cd $HOME/Termux-Pseudo-Bootloader
 make
 ```
 
+this is just a byproduct of me learning c and stuff.
