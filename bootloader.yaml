@@ -8,7 +8,7 @@ login:
     type: "main.options"
     options: 
         label: "Fedora 41 (aarch64)"
-        cmd: "echo 'yes'"
+        cmd: "bash $HOME/.config/bootloader/boot"
 
 fallback:
     type: "main.options"
