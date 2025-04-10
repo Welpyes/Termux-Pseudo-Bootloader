@@ -4,88 +4,32 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdio.h>
+#include <yaml.h>
 
-#define TIMEOUT 10
-#define NUM_OPTIONS 3
 #define MAX_LINE 256
+#define MAX_OPTIONS 10
 
-char OPTIONS[NUM_OPTIONS][50] = {
-    "Fedora 41 (aarch64)",
-    "Fedora root shell(fallback)",
-    "Turn Off Computer"
-};
+typedef struct {
+    char label[50];
+    char cmd[MAX_LINE];
+} Option;
 
-char COMMANDS[NUM_OPTIONS][MAX_LINE] = {
-    "bash $HOME/.config/startx",
-    "bash -c 'pd sh fedora'",
-    "/data/data/com.termux/files/usr/bin/pkill -f termux"
-};
+typedef struct {
+    char title[50];
+    int timeout;
+    Option *options;
+    int num_options;
+} Config;
 
-void strip_quotes(char *str) {
-    int len = strlen(str);
-    if (len >= 2 && str[0] == '"' && str[len - 1] == '"') {
-        memmove(str, str + 1, len - 2);
-        str[len - 2] = '\0';
+void log_error(const char *msg) {
+    char path[256];
+    snprintf(path, sizeof(path), "%s/tmp/bootloader.log", getenv("HOME"));
+    FILE *log = fopen(path, "a");
+    if (log) {
+        time_t now = time(NULL);
+        fprintf(log, "[%s] ERROR: %s\n", ctime(&now), msg);
+        fclose(log);
     }
-}
-
-// ini parsing stuff
-int ini_parse(const char *filename, int (*handler)(void*, const char*, const char*, const char*), void *user) {
-    FILE *file = fopen(filename, "r");
-    if (!file) return -1;
-
-    char line[MAX_LINE], section[MAX_LINE] = "", name[MAX_LINE], value[MAX_LINE];
-    int lineno = 0;
-
-    while (fgets(line, sizeof(line), file)) {
-        lineno++;
-        char *start = line;
-        while (*start == ' ' || *start == '\t') start++;
-        if (*start == '#' || *start == ';' || *start == '\n') continue;
-
-        if (*start == '[') {
-            char *end = strchr(start, ']');
-            if (!end) continue;
-            strncpy(section, start + 1, end - start - 1);
-            section[end - start - 1] = '\0';
-            continue;
-        }
-
-        char *eq = strchr(start, '=');
-        if (!eq) continue;
-        strncpy(name, start, eq - start);
-        name[eq - start] = '\0';
-        while (name[strlen(name) - 1] == ' ') name[strlen(name) - 1] = '\0';
-
-        char *val_ptr = eq + 1;
-        while (*val_ptr == ' ' || *val_ptr == '\t') val_ptr++;
-        strncpy(value, val_ptr, sizeof(value) - 1);
-        value[sizeof(value) - 1] = '\0';
-        if (value[strlen(value) - 1] == '\n') value[strlen(value) - 1] = '\0';
-        strip_quotes(value);
-
-        if (handler(user, section, name, value) < 0) {
-            fclose(file);
-            return -1;
-        }
-    }
-
-    fclose(file);
-    return 0;
-}
-
-// fills arrays from ini
-int ini_handler(void *user, const char *section, const char *name, const char *value) {
-    if (strcmp(section, "selection_title") == 0) {
-        if (strcmp(name, "distro") == 0) strncpy(OPTIONS[0], value, sizeof(OPTIONS[0]) - 1);
-        else if (strcmp(name, "root") == 0) strncpy(OPTIONS[1], value, sizeof(OPTIONS[1]) - 1);
-        else if (strcmp(name, "exit") == 0) strncpy(OPTIONS[2], value, sizeof(OPTIONS[2]) - 1);
-    } else if (strcmp(section, "selection_cmd") == 0) {
-        if (strcmp(name, "distro") == 0) strncpy(COMMANDS[0], value, sizeof(COMMANDS[0]) - 1);
-        else if (strcmp(name, "root") == 0) strncpy(COMMANDS[1], value, sizeof(COMMANDS[1]) - 1);
-        else if (strcmp(name, "exit") == 0) strncpy(COMMANDS[2], value, sizeof(COMMANDS[2]) - 1);
-    }
-    return 1;
 }
 
 void center_text(int row, int cols, const char *text) {
@@ -93,15 +37,14 @@ void center_text(int row, int cols, const char *text) {
     mvprintw(row, col, "%s", text);
 }
 
-// draws the menu
-void draw_menu(int rows, int cols, int cursor) {
+void draw_menu(int rows, int cols, int cursor, Config *config, int remaining) {
     clear();
-    int start_row = (rows - NUM_OPTIONS - 4) / 2;
-    center_text(start_row - 2, cols, "Boot Menu");
+    int start_row = (rows - config->num_options - 4) / 2;
+    center_text(start_row - 2, cols, config->title);
 
-    for (int i = 0; i < NUM_OPTIONS; i++) {
+    for (int i = 0; i < config->num_options; i++) {
         char option[50];
-        snprintf(option, sizeof(option), " %s ", OPTIONS[i]);
+        snprintf(option, sizeof(option), " %s ", config->options[i].label);
         if (i == cursor) {
             attron(COLOR_PAIR(1));
             center_text(start_row + i, cols, option);
@@ -112,34 +55,156 @@ void draw_menu(int rows, int cols, int cursor) {
     }
 
     char timeout_str[20];
-    snprintf(timeout_str, sizeof(timeout_str), "Timeout %ds", TIMEOUT);
-    center_text(start_row + NUM_OPTIONS + 1, cols, timeout_str);
+    snprintf(timeout_str, sizeof(timeout_str), "Timeout %ds", remaining);
+    center_text(start_row + config->num_options + 1, cols, timeout_str);
     refresh();
 }
 
-// runs the command
-void execute_command(int cursor) {
+void execute_command(int cursor, Config *config) {
     endwin();
-    FILE *log = fopen("/tmp/bootloader.log", "a");
+    char path[256];
+    snprintf(path, sizeof(path), "%s/tmp/bootloader.log", getenv("HOME"));
+    FILE *log = fopen(path, "a");
     if (log) {
-        fprintf(log, "Executing: %s\n", COMMANDS[cursor]);
+        fprintf(log, "Executing: %s\n", config->options[cursor].cmd);
         fclose(log);
+    } else {
+        log_error("Failed to open log file for writing");
     }
-    int result = system(COMMANDS[cursor]);
+    int result = system(config->options[cursor].cmd);
     if (result != 0) {
-        FILE *log = fopen("/tmp/bootloader.log", "a");
-        if (log) {
-            fprintf(log, "Command failed with exit code %d\n", result);
-            fclose(log);
-        }
+        char err[256];
+        snprintf(err, sizeof(err), "Command '%s' failed with exit code %d", 
+                 config->options[cursor].cmd, result);
+        log_error(err);
     }
     exit(0);
 }
 
+int parse_yaml(const char *filename, Config *config) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        log_error("Failed to open YAML config file");
+        return -1;
+    }
+
+    yaml_parser_t parser;
+    if (!yaml_parser_initialize(&parser)) {
+        log_error("Failed to initialize YAML parser");
+        fclose(file);
+        return -1;
+    }
+    yaml_parser_set_input_file(&parser, file);
+
+    yaml_event_t event;
+    int done = 0, in_prompt = 0, in_options_seq = 0, current_option = -1;
+    char options_list[MAX_OPTIONS][50];
+    int option_count = 0;
+
+    config->options = malloc(MAX_OPTIONS * sizeof(Option));
+    if (!config->options) {
+        log_error("Memory allocation failed for options");
+        fclose(file);
+        yaml_parser_delete(&parser);
+        return -1;
+    }
+    config->num_options = 0;
+
+    while (!done) {
+        if (!yaml_parser_parse(&parser, &event)) {
+            char err[256];
+            snprintf(err, sizeof(err), "YAML parsing error at line %zu: %s", 
+                     parser.problem_mark.line + 1, parser.problem);
+            log_error(err);
+            break;
+        }
+
+        if (event.type == YAML_STREAM_END_EVENT) {
+            done = 1;
+        } else if (event.type == YAML_MAPPING_START_EVENT) {
+            // Just keep going
+        } else if (event.type == YAML_MAPPING_END_EVENT) {
+            if (in_prompt && !in_options_seq) in_prompt = 0;
+            else if (current_option >= 0) current_option = -1;
+        } else if (event.type == YAML_SEQUENCE_START_EVENT) {
+            if (in_prompt) in_options_seq = 1;
+        } else if (event.type == YAML_SEQUENCE_END_EVENT) {
+            if (in_options_seq) in_options_seq = 0;
+        } else if (event.type == YAML_SCALAR_EVENT) {
+            char *value = (char *)event.data.scalar.value;
+
+            if (!in_prompt && current_option == -1 && !in_options_seq) {
+                if (strcmp(value, "prompt") == 0) {
+                    in_prompt = 1;
+                } else {
+                    for (int i = 0; i < option_count; i++) {
+                        if (strcmp(value, options_list[i]) == 0) {
+                            current_option = i;
+                            break;
+                        }
+                    }
+                }
+            } else if (in_prompt && !in_options_seq) {
+                if (strcmp(value, "title") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    strncpy(config->title, (char *)event.data.scalar.value, sizeof(config->title) - 1);
+                    yaml_event_delete(&event);
+                } else if (strcmp(value, "timeout") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    config->timeout = atoi((char *)event.data.scalar.value);
+                    yaml_event_delete(&event);
+                }
+            } else if (in_options_seq && option_count < MAX_OPTIONS) {
+                strncpy(options_list[option_count++], value, 50);
+            } else if (current_option >= 0) {
+                if (strcmp(value, "type") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    yaml_event_delete(&event);
+                } else if (strcmp(value, "options") == 0) {
+                    // Skip this one
+                } else if (strcmp(value, "label") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    strncpy(config->options[current_option].label, (char *)event.data.scalar.value, 50);
+                    config->num_options = current_option + 1 > config->num_options ? 
+                                          current_option + 1 : config->num_options;
+                    yaml_event_delete(&event);
+                } else if (strcmp(value, "cmd") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    strncpy(config->options[current_option].cmd, (char *)event.data.scalar.value, MAX_LINE);
+                    yaml_event_delete(&event);
+                }
+            }
+        }
+        yaml_event_delete(&event);
+    }
+
+    yaml_parser_delete(&parser);
+    fclose(file);
+
+    if (config->num_options == 0) {
+        log_error("No valid options found in YAML");
+        free(config->options);
+        return -1;
+    }
+    return 0;
+}
+
 int main() {
-    char config_path[256];
-    snprintf(config_path, sizeof(config_path), "%s/.config/bootloader/bootloader.ini", getenv("HOME"));
-    ini_parse(config_path, ini_handler, NULL);
+    Config config = { "Bootloader", 10, NULL, 0 };
+    char path[256];
+    snprintf(path, sizeof(path), "%s/.config/bootloader/bootloader.yaml", getenv("HOME"));
+
+    if (parse_yaml(path, &config) != 0) {
+        log_error("Falling back to default config due to YAML parsing failure");
+        config.num_options = 3;
+        config.options = malloc(3 * sizeof(Option));
+        strcpy(config.options[0].label, "Fedora 41 (aarch64)");
+        strcpy(config.options[0].cmd, "bash $HOME/.config/startx");
+        strcpy(config.options[1].label, "Fedora root shell(fallback)");
+        strcpy(config.options[1].cmd, "pd sh fedora");
+        strcpy(config.options[2].label, "Turn Off Computer");
+        strcpy(config.options[2].cmd, "pkill -f termux");
+    }
 
     initscr();
     start_color();
@@ -149,35 +214,28 @@ int main() {
     keypad(stdscr, TRUE);
     curs_set(0);
 
-    int rows = LINES;
-    int cols = COLS;
-    int cursor = 0;
-
-    draw_menu(rows, cols, cursor);
-
-    time_t end_time = time(NULL) + TIMEOUT;
+    int rows = LINES, cols = COLS, cursor = 0;
+    time_t end_time = time(NULL) + config.timeout;
     timeout(1000);
 
     while (time(NULL) < end_time) {
+        int remaining = end_time - time(NULL);
+        draw_menu(rows, cols, cursor, &config, remaining);
         int ch = getch();
         if (ch != ERR) {
-            switch (ch) {
-                case KEY_UP:
-                    if (cursor > 0) cursor--;
-                    end_time = time(NULL) + TIMEOUT;
-                    break;
-                case KEY_DOWN:
-                    if (cursor < NUM_OPTIONS - 1) cursor++;
-                    end_time = time(NULL) + TIMEOUT;
-                    break;
-                case '\n':
-                    execute_command(cursor);
-                    break;
+            if (ch == KEY_UP && cursor > 0) {
+                cursor--;
+                end_time = time(NULL) + config.timeout;
+            } else if (ch == KEY_DOWN && cursor < config.num_options - 1) {
+                cursor++;
+                end_time = time(NULL) + config.timeout;
+            } else if (ch == '\n') {
+                execute_command(cursor, &config);
             }
-            draw_menu(rows, cols, cursor);
         }
     }
 
-    execute_command(0);
+    execute_command(0, &config);
+    free(config.options);
     return 0;
 }

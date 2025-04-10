@@ -1,0 +1,33 @@
+prompt:
+    title: "Boot Menu"
+    timeout: 10 
+    bold: true
+    options: ["login", "fallback", "exit"]
+
+login:
+    type: "main.options"
+    options: 
+        label: "Fedora 41 (aarch64)"
+        cmd: "echo 'yes'"
+
+fallback:
+    type: "main.options"
+    options: 
+        label: "Fedora Root Shell (fallback)"
+        cmd: "pd sh fedora"
+        
+exit:
+    type: "main.options"
+    options:
+        label: "Shutdown Computer"
+        cmd: "pkill -f termux"
+
+# you can also make custom selections
+# just uncomment it or replicate it
+
+# test:
+#     type: "main.options"
+#     options:
+#       label: "Test Button"
+#       cmd: "echo 'Test Button XD'"
+    
