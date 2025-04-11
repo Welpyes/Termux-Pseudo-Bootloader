@@ -5,13 +5,15 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 RESET='\033[0m'
 
-# Function to simulate starting a service
 start_service() {
     local service="$1"
-    local delay="$2"
-    echo -n "Starting $service... "
-    sleep "$delay"
-    if [ $((RANDOM % 10)) -eq 0 ]; then  # 10% chance of failure for realism
+    local delay=${2:-0.2}  # default delay in seconds
+    local status=$(( RANDOM % 92 ))  # randomized failed chance
+ 
+    printf "Starting %-40s" "$service..."
+    sleep "$delay"  # Simulate processing time
+ 
+    if [ "$status" -eq 0 ]; then
         echo -e "[ ${RED}FAILED${RESET} ]"
         return 1
     else
@@ -19,6 +21,7 @@ start_service() {
         return 0
     fi
 }
+
 
 # Function to run the startup sequence
 run_startup() {
