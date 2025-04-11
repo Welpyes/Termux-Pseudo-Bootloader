@@ -1,54 +1,17 @@
 #!/bin/bash
 
-RESET=$(tput sgr0)
-GREEN=$(tput setaf 2)
-RED=$(tput setaf 1)
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+RESET='\033[0m'
 
-# Path to the INI file
-INI_FILE="$HOME/.config/bootloader/bootloader.ini"
-
-# Check if the file exists
-if [ ! -f "$INI_FILE" ]; then
-    echo "Error: INI file $INI_FILE not found"
-    exit 1
-fi
-
-# Variables to track current section and the desired value
-current_section=""
-CMD1=""
-
-# Read the INI file line by line
-while IFS='=' read -r key value; do
-    # Trim leading/trailing whitespace from key and value
-    key=$(echo "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    value=$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-
-    # Skip empty lines or comments (fixed regex with escaped semicolon)
-    if [ -z "$key" ] || [[ "$key" =~ ^# ]] || [[ "$key" =~ ^\; ]]; then
-        continue
-    fi
-
-    # Check for section headers
-    if [[ "$key" =~ ^\[.*\]$ ]]; then
-        current_section=$(echo "$key" | sed 's/\[\(.*\)\]/\1/')
-        continue
-    fi
-
-    # Look for 'distro' in the [selection_title] section
-    if [ "$current_section" = "selection_title" ] && [ "$key" = "distro" ]; then
-        CMD1="$value"
-    fi
-done < "$INI_FILE"
-
+# Function to simulate starting a service
 start_service() {
     local service="$1"
-    local delay=${2:-0.2}  # default delay in seconds
-    local status=$(( RANDOM % 10 ))  # randomized failed chance
-
-    printf "Starting %-40s" "$service..."
-    sleep "$delay"  # Simulate processing time
-
-    if [ "$status" -eq 0 ]; then
+    local delay="$2"
+    echo -n "Starting $service... "
+    sleep "$delay"
+    if [ $((RANDOM % 10)) -eq 0 ]; then  # 10% chance of failure for realism
         echo -e "[ ${RED}FAILED${RESET} ]"
         return 1
     else
@@ -57,14 +20,19 @@ start_service() {
     fi
 }
 
+# Function to run the startup sequence
 run_startup() {
+    # Get the distro name from YAML
+    CONFIG_FILE="$HOME/.config/bootloader/bootloader.yaml"
+    DISTRO=$(yq e '.login.options.label' "$CONFIG_FILE" 2>/dev/null || echo "Unknown Distro")
+
     clear
-    echo "Welcome to ${CMD1:-Unknown Distro}"  # Fallback if CMD1 is unset
+    echo "Welcome to $DISTRO"  # Use the parsed label instead of CMD1
     echo "Booting system..."
     echo "----------------------------------------"
     sleep 1
 
-    # Services list (add more if you like)
+    # Services list
     SERVICES=(
         "kernel modules"
         "network interfaces"
@@ -120,17 +88,20 @@ run_startup() {
 
     # Simulate service startup
     for service in "${SERVICES[@]}"; do
-        start_service "$service" "$(printf "0.%d" $(( RANDOM % 3 + 1 )))"  # Random delay between 0.1 and 0.3s
+        start_service "$service" "$(printf "0.%d" $(( RANDOM % 3 + 1 )))"
     done
 
     echo "----------------------------------------"
     sleep 1
     echo -e "${GREEN}System boot completed.${RESET}"
     echo "Opening Display..."
-    sleep 2  # Give it a moment before clearing or proceeding
+    sleep 2
     clear
 }
 
+# Run the startup sequence
 run_startup
+
+# Launch proot in the background and start the display manager
 (sleep 1 && bash "$HOME/.config/bootloader/proot" > /dev/null 2>&1) &
 env dm
