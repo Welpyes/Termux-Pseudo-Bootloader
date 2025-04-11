@@ -4,7 +4,7 @@ A rewrite of my 'pseudo systemd bootloader bash script' to the C programming lan
 dependencies:
 ```
 pkg update && pkg upgrade
-pkg install ncurses libyaml clang make
+pkg install ncurses libyaml clang make yq
 ```
 
 compile:
