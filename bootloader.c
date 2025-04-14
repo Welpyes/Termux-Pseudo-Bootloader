@@ -10,167 +10,183 @@
 #define MAX_OPTIONS 10
 
 typedef struct {
-    char label[50];
-    char cmd[MAX_LINE];
-} Option;
+    char name[50];
+    char command[MAX_LINE];
+} MenuOption;
 
+// config struct
 typedef struct {
     char title[50];
-    int timeout;
-    Option *options;
-    int num_options;
-} Config;
+    int wait_time;
+    MenuOption *options_list;
+    int num_items;
+} BootConfig;
 
-void log_error(const char *msg) {
-    char path[256];
-    snprintf(path, sizeof(path), "%s/tmp/bootloader.log", getenv("HOME"));
-    FILE *log = fopen(path, "a");
-    if (log) {
-        time_t now = time(NULL);
-        fprintf(log, "[%s] ERROR: %s\n", ctime(&now), msg);
-        fclose(log);
+// logger
+void write_error(char *error_msg) {
+    char log_file[256];
+    sprintf(log_file, "%s/tmp/boot.log", getenv("HOME"));
+    FILE *f = fopen(log_file, "a");
+    if (f != NULL) {
+        time_t current_time = time(NULL);
+        fprintf(f, "[%s] Error: %s\n", ctime(&current_time), error_msg);
+        fclose(f);
     }
 }
 
-void center_text(int row, int cols, const char *text) {
-    int col = (cols - strlen(text)) / 2;
+// center text func
+void put_text_in_middle(int row, int width, char *text) {
+    int col = (width - strlen(text)) / 2;
     mvprintw(row, col, "%s", text);
 }
 
-void draw_menu(int rows, int cols, int cursor, Config *config, int remaining) {
-    clear();
-    int start_row = (rows - config->num_options - 4) / 2;
-    center_text(start_row - 2, cols, config->title);
+   /*a diagram so i could visualise
+     *      Boot Menu
+     *    
+     *      option 1 // default and highlighted first
+     *      option 2
+     *      option 3
+     *
+     *      timer: $time
+   */
 
-    for (int i = 0; i < config->num_options; i++) {
-        char option[50];
-        snprintf(option, sizeof(option), " %s ", config->options[i].label);
-        if (i == cursor) {
+void show_menu(int height, int width, int selected, BootConfig *cfg, int seconds_left) {
+    clear();
+    int first_row = (height - cfg->num_items - 4) / 2;
+    put_text_in_middle(first_row - 2, width, cfg->title);
+
+    for (int i = 0; i < cfg->num_items; i++) {
+        char temp[50];
+        sprintf(temp, " %s ", cfg->options_list[i].name);
+        if (i == selected) {
             attron(COLOR_PAIR(1));
-            center_text(start_row + i, cols, option);
+            put_text_in_middle(first_row + i, width, temp);
             attroff(COLOR_PAIR(1));
         } else {
-            center_text(start_row + i, cols, option);
+            put_text_in_middle(first_row + i, width, temp);
         }
     }
 
-    char timeout_str[20];
-    snprintf(timeout_str, sizeof(timeout_str), "Timeout %ds", remaining);
-    center_text(start_row + config->num_options + 1, cols, timeout_str);
+    char time_text[20];
+    sprintf(time_text, "Timeout: %ds", seconds_left);
+    put_text_in_middle(first_row + cfg->num_items + 1, width, time_text);
     refresh();
 }
 
-void execute_command(int cursor, Config *config) {
+void run_option(int choice, BootConfig *cfg) {
     endwin();
-    char path[256];
-    snprintf(path, sizeof(path), "%s/tmp/bootloader.log", getenv("HOME"));
-    FILE *log = fopen(path, "a");
-    if (log) {
-        fprintf(log, "Executing: %s\n", config->options[cursor].cmd);
-        fclose(log);
+    char log_file[256];
+    sprintf(log_file, "%s/tmp/boot.log", getenv("HOME"));
+    FILE *f = fopen(log_file, "a");
+    if (f) {
+        fprintf(f, "Running: %s\n", cfg->options_list[choice].command);
+        fclose(f);
     } else {
-        log_error("Failed to open log file for writing");
+        write_error("Couldn’t write to log file");
     }
-    int result = system(config->options[cursor].cmd);
+    int result = system(cfg->options_list[choice].command);
     if (result != 0) {
-        char err[256];
-        snprintf(err, sizeof(err), "Command '%s' failed with exit code %d", 
-                 config->options[cursor].cmd, result);
-        log_error(err);
+        char err_msg[256];
+        sprintf(err_msg, "Command %s failed, code %d", cfg->options_list[choice].command, result);
+        write_error(err_msg);
     }
     exit(0);
 }
 
-int parse_yaml(const char *filename, Config *config) {
-    FILE *file = fopen(filename, "r");
+// yaml parser basically
+/* btw i cant be arsed to do it with switches again
+ */
+int read_yaml(char *file_path, BootConfig *cfg) {
+    FILE *file = fopen(file_path, "r");
     if (!file) {
-        log_error("Failed to open YAML config file");
+        write_error("Can’t open YAML file"); // just error checking
         return -1;
     }
 
     yaml_parser_t parser;
     if (!yaml_parser_initialize(&parser)) {
-        log_error("Failed to initialize YAML parser");
+        write_error("YAML parser init failed"); // another error check (its a good practice)
         fclose(file);
         return -1;
     }
     yaml_parser_set_input_file(&parser, file);
 
     yaml_event_t event;
-    int done = 0, in_prompt = 0, in_options_seq = 0, current_option = -1;
-    char options_list[MAX_OPTIONS][50];
+    int finished = 0;
+    int in_menu_section = 0;
+    int in_options_list = 0;
+    int current_item = -1;
+    char option_names[MAX_OPTIONS][50];
     int option_count = 0;
 
-    config->options = malloc(MAX_OPTIONS * sizeof(Option));
-    if (!config->options) {
-        log_error("Memory allocation failed for options");
+    cfg->options_list = malloc(MAX_OPTIONS * sizeof(MenuOption));
+    if (!cfg->options_list) {
+        write_error("No memory for options");
         fclose(file);
         yaml_parser_delete(&parser);
         return -1;
     }
-    config->num_options = 0;
+    cfg->num_items = 0;
 
-    while (!done) {
+    while (!finished) {
         if (!yaml_parser_parse(&parser, &event)) {
             char err[256];
-            snprintf(err, sizeof(err), "YAML parsing error at line %zu: %s", 
-                     parser.problem_mark.line + 1, parser.problem);
-            log_error(err);
+            sprintf(err, "YAML error at line %zu: %s", parser.problem_mark.line + 1, parser.problem);
+            write_error(err);
             break;
         }
 
         if (event.type == YAML_STREAM_END_EVENT) {
-            done = 1;
+            finished = 1;
         } else if (event.type == YAML_MAPPING_START_EVENT) {
-            // Just keep going
+            // do nothing
         } else if (event.type == YAML_MAPPING_END_EVENT) {
-            if (in_prompt && !in_options_seq) in_prompt = 0;
-            else if (current_option >= 0) current_option = -1;
+            if (in_menu_section && !in_options_list) in_menu_section = 0;
+            else if (current_item >= 0) current_item = -1;
         } else if (event.type == YAML_SEQUENCE_START_EVENT) {
-            if (in_prompt) in_options_seq = 1;
+            if (in_menu_section) in_options_list = 1;
         } else if (event.type == YAML_SEQUENCE_END_EVENT) {
-            if (in_options_seq) in_options_seq = 0;
+            if (in_options_list) in_options_list = 0;
         } else if (event.type == YAML_SCALAR_EVENT) {
-            char *value = (char *)event.data.scalar.value;
+            char *val = (char *)event.data.scalar.value;
 
-            if (!in_prompt && current_option == -1 && !in_options_seq) {
-                if (strcmp(value, "prompt") == 0) {
-                    in_prompt = 1;
+            if (!in_menu_section && current_item == -1 && !in_options_list) {
+                if (strcmp(val, "prompt") == 0) {
+                    in_menu_section = 1;
                 } else {
                     for (int i = 0; i < option_count; i++) {
-                        if (strcmp(value, options_list[i]) == 0) {
-                            current_option = i;
+                        if (strcmp(val, option_names[i]) == 0) {
+                            current_item = i;
                             break;
                         }
                     }
                 }
-            } else if (in_prompt && !in_options_seq) {
-                if (strcmp(value, "title") == 0) {
+            } else if (in_menu_section && !in_options_list) {
+                if (strcmp(val, "title") == 0) {
                     yaml_parser_parse(&parser, &event);
-                    strncpy(config->title, (char *)event.data.scalar.value, sizeof(config->title) - 1);
+                    strcpy(cfg->title, (char *)event.data.scalar.value);
                     yaml_event_delete(&event);
-                } else if (strcmp(value, "timeout") == 0) {
+                } else if (strcmp(val, "timeout") == 0) {
                     yaml_parser_parse(&parser, &event);
-                    config->timeout = atoi((char *)event.data.scalar.value);
+                    cfg->wait_time = atoi((char *)event.data.scalar.value);
                     yaml_event_delete(&event);
                 }
-            } else if (in_options_seq && option_count < MAX_OPTIONS) {
-                strncpy(options_list[option_count++], value, 50);
-            } else if (current_option >= 0) {
-                if (strcmp(value, "type") == 0) {
+            } else if (in_options_list && option_count < MAX_OPTIONS) {
+                strcpy(option_names[option_count++], val);
+            } else if (current_item >= 0) {
+                if (strcmp(val, "type") == 0) {
                     yaml_parser_parse(&parser, &event);
                     yaml_event_delete(&event);
-                } else if (strcmp(value, "options") == 0) {
-                    // Skip this one
-                } else if (strcmp(value, "label") == 0) {
+                } else if (strcmp(val, "options") == 0) {
+                    // skip
+                } else if (strcmp(val, "label") == 0) {
                     yaml_parser_parse(&parser, &event);
-                    strncpy(config->options[current_option].label, (char *)event.data.scalar.value, 50);
-                    config->num_options = current_option + 1 > config->num_options ? 
-                                          current_option + 1 : config->num_options;
+                    strcpy(cfg->options_list[current_item].name, (char *)event.data.scalar.value);
+                    cfg->num_items = current_item + 1 > cfg->num_items ? current_item + 1 : cfg->num_items;
                     yaml_event_delete(&event);
-                } else if (strcmp(value, "cmd") == 0) {
+                } else if (strcmp(val, "cmd") == 0) {
                     yaml_parser_parse(&parser, &event);
-                    strncpy(config->options[current_option].cmd, (char *)event.data.scalar.value, MAX_LINE);
+                    strcpy(cfg->options_list[current_item].command, (char *)event.data.scalar.value);
                     yaml_event_delete(&event);
                 }
             }
@@ -181,31 +197,39 @@ int parse_yaml(const char *filename, Config *config) {
     yaml_parser_delete(&parser);
     fclose(file);
 
-    if (config->num_options == 0) {
-        log_error("No valid options found in YAML");
-        free(config->options);
+    if (cfg->num_items == 0) {
+        write_error("No options in YAML");
+        free(cfg->options_list);
         return -1;
     }
     return 0;
 }
 
+// shits bout to go down 
 int main() {
-    Config config = { "Bootloader", 10, NULL, 0 };
-    char path[256];
-    snprintf(path, sizeof(path), "%s/.config/bootloader/bootloader.yaml", getenv("HOME"));
+    BootConfig config;
+    strcpy(config.title, "Boot Menu"); // default
+    config.wait_time = 10;
+    config.options_list = NULL;
+    config.num_items = 0;
 
-    if (parse_yaml(path, &config) != 0) {
-        log_error("Falling back to default config due to YAML parsing failure");
-        config.num_options = 3;
-        config.options = malloc(3 * sizeof(Option));
-        strcpy(config.options[0].label, "Fedora 41 (aarch64)");
-        strcpy(config.options[0].cmd, "bash $HOME/.config/startx");
-        strcpy(config.options[1].label, "Fedora root shell(fallback)");
-        strcpy(config.options[1].cmd, "pd sh fedora");
-        strcpy(config.options[2].label, "Turn Off Computer");
-        strcpy(config.options[2].cmd, "pkill -f termux");
+    char config_file[256];
+    sprintf(config_file, "%s/.config/bootloader/bootloader.yaml", getenv("HOME"));
+
+    if (read_yaml(config_file, &config) != 0) {
+        write_error("Using default options"); // error checker (its a good practice ik)
+        config.num_items = 3;
+        config.options_list = malloc(3 * sizeof(MenuOption));
+        // fallback stuff if for some reason its fucked
+        strcpy(config.options_list[0].name, "Proot-Distro Os");
+        strcpy(config.options_list[0].command, "bash $HOME/.config/bootloader/boot");
+        strcpy(config.options_list[1].name, "Proot Shell");
+        strcpy(config.options_list[1].command, "pd list");
+        strcpy(config.options_list[2].name, "Shutdown");
+        strcpy(config.options_list[2].command, "pkill -f termux");
     }
 
+    // Initialize NCurses 
     initscr();
     start_color();
     init_pair(1, COLOR_BLACK, COLOR_WHITE);
@@ -214,28 +238,38 @@ int main() {
     keypad(stdscr, TRUE);
     curs_set(0);
 
-    int rows = LINES, cols = COLS, cursor = 0;
-    time_t end_time = time(NULL) + config.timeout;
-    timeout(1000);
+    /*Fix: Set a 100ms timeout for getch()
+     * i found this discussed i stackoverflow but its kinda loose and they didnt give out an answer
+     * so this sht i made myself ayways :skull:
+  */
+    timeout(100);
 
-    while (time(NULL) < end_time) {
-        int remaining = end_time - time(NULL);
-        draw_menu(rows, cols, cursor, &config, remaining);
-        int ch = getch();
-        if (ch != ERR) {
-            if (ch == KEY_UP && cursor > 0) {
-                cursor--;
-                end_time = time(NULL) + config.timeout;
-            } else if (ch == KEY_DOWN && cursor < config.num_options - 1) {
-                cursor++;
-                end_time = time(NULL) + config.timeout;
-            } else if (ch == '\n') {
-                execute_command(cursor, &config);
+    int screen_height = LINES;
+    int screen_width = COLS;
+    int current_choice = 0;
+    time_t end = time(NULL) + config.wait_time;
+
+    while (time(NULL) < end) {
+        int secs = end - time(NULL);
+        show_menu(screen_height, screen_width, current_choice, &config, secs);
+        int key = getch();
+        if (key != ERR) {
+            if (key == KEY_UP && current_choice > 0) {
+                current_choice--;
+                end = time(NULL) + config.wait_time; // Reset timer
+            }
+            if (key == KEY_DOWN && current_choice < config.num_items - 1) {
+                current_choice++;
+                end = time(NULL) + config.wait_time; // Reset timer
+            }
+            if (key == '\n') {
+                run_option(current_choice, &config);
             }
         }
     }
 
-    execute_command(0, &config);
-    free(config.options);
+    // Timeout reached, run default option
+    run_option(0, &config);
+    free(config.options_list); // Note: Unreachable due to exit(0) in run_option
     return 0;
 }
