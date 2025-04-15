@@ -7,15 +7,13 @@
 #include <yaml.h>
 
 #define MAX_LINE 256
-#define MAX_OPTIONS 10 // Arbitrary max for dynamic options; adjust as needed
+#define MAX_OPTIONS 10
 
-// Struct to hold menu options
 typedef struct {
     char label[50];
     char cmd[MAX_LINE];
 } Option;
 
-// Struct to hold prompt config
 typedef struct {
     char title[50];
     int timeout;
@@ -24,9 +22,9 @@ typedef struct {
 } Config;
 
 void log_error(const char *msg) {
-    char log_path[256];
-    snprintf(log_path, sizeof(log_path), "%s/tmp/bootloader.log", getenv("HOME"));
-    FILE *log = fopen(log_path, "a");
+    char path[256];
+    snprintf(path, sizeof(path), "%s/tmp/bootloader.log", getenv("HOME"));
+    FILE *log = fopen(path, "a");
     if (log) {
         time_t now = time(NULL);
         fprintf(log, "[%s] ERROR: %s\n", ctime(&now), msg);
@@ -64,9 +62,9 @@ void draw_menu(int rows, int cols, int cursor, Config *config, int remaining) {
 
 void execute_command(int cursor, Config *config) {
     endwin();
-    char log_path[256];
-    snprintf(log_path, sizeof(log_path), "%s/tmp/bootloader.log", getenv("HOME"));
-    FILE *log = fopen(log_path, "a");
+    char path[256];
+    snprintf(path, sizeof(path), "%s/tmp/bootloader.log", getenv("HOME"));
+    FILE *log = fopen(path, "a");
     if (log) {
         fprintf(log, "Executing: %s\n", config->options[cursor].cmd);
         fclose(log);
@@ -75,10 +73,10 @@ void execute_command(int cursor, Config *config) {
     }
     int result = system(config->options[cursor].cmd);
     if (result != 0) {
-        char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Command '%s' failed with exit code %d", 
+        char err[256];
+        snprintf(err, sizeof(err), "Command '%s' failed with exit code %d", 
                  config->options[cursor].cmd, result);
-        log_error(err_msg);
+        log_error(err);
     }
     exit(0);
 }
@@ -99,10 +97,9 @@ int parse_yaml(const char *filename, Config *config) {
     yaml_parser_set_input_file(&parser, file);
 
     yaml_event_t event;
-    int done = 0, in_prompt = 0, in_options_seq = 0, in_option_section = -1;
-    char option_sections[MAX_OPTIONS][50];
+    int done = 0, in_prompt = 0, in_options_seq = 0, current_option = -1;
+    char options_list[MAX_OPTIONS][50];
     int option_count = 0;
-    char log_msg[256];
 
     config->options = malloc(MAX_OPTIONS * sizeof(Option));
     if (!config->options) {
@@ -115,118 +112,75 @@ int parse_yaml(const char *filename, Config *config) {
 
     while (!done) {
         if (!yaml_parser_parse(&parser, &event)) {
-            snprintf(log_msg, sizeof(log_msg), "YAML parsing error at line %zu: %s", 
+            char err[256];
+            snprintf(err, sizeof(err), "YAML parsing error at line %zu: %s", 
                      parser.problem_mark.line + 1, parser.problem);
-            log_error(log_msg);
+            log_error(err);
             break;
         }
 
-        switch (event.type) {
-            case YAML_STREAM_END_EVENT:
-                done = 1;
-                snprintf(log_msg, sizeof(log_msg), "End of YAML stream");
-                log_error(log_msg);
-                break;
-            case YAML_MAPPING_START_EVENT:
-                snprintf(log_msg, sizeof(log_msg), "Start mapping");
-                log_error(log_msg);
-                break;
-            case YAML_MAPPING_END_EVENT:
-                snprintf(log_msg, sizeof(log_msg), "End mapping");
-                log_error(log_msg);
-                if (in_prompt && !in_options_seq) in_prompt = 0;
-                else if (in_option_section >= 0) in_option_section = -1;
-                break;
-            case YAML_SEQUENCE_START_EVENT:
-                if (in_prompt) in_options_seq = 1;
-                snprintf(log_msg, sizeof(log_msg), "Start sequence");
-                log_error(log_msg);
-                break;
-            case YAML_SEQUENCE_END_EVENT:
-                if (in_options_seq) in_options_seq = 0;
-                snprintf(log_msg, sizeof(log_msg), "End sequence");
-                log_error(log_msg);
-                break;
-            case YAML_SCALAR_EVENT:
-                snprintf(log_msg, sizeof(log_msg), "Scalar: %s", event.data.scalar.value);
-                log_error(log_msg);
+        if (event.type == YAML_STREAM_END_EVENT) {
+            done = 1;
+        } else if (event.type == YAML_MAPPING_START_EVENT) {
+            // Just keep going
+        } else if (event.type == YAML_MAPPING_END_EVENT) {
+            if (in_prompt && !in_options_seq) in_prompt = 0;
+            else if (current_option >= 0) current_option = -1;
+        } else if (event.type == YAML_SEQUENCE_START_EVENT) {
+            if (in_prompt) in_options_seq = 1;
+        } else if (event.type == YAML_SEQUENCE_END_EVENT) {
+            if (in_options_seq) in_options_seq = 0;
+        } else if (event.type == YAML_SCALAR_EVENT) {
+            char *value = (char *)event.data.scalar.value;
 
-                if (!in_prompt && in_option_section == -1 && !in_options_seq) {
-                    if (strcmp((char *)event.data.scalar.value, "prompt") == 0) {
-                        in_prompt = 1;
-                        snprintf(log_msg, sizeof(log_msg), "Entering prompt section");
-                        log_error(log_msg);
-                    } else {
-                        for (int i = 0; i < option_count; i++) {
-                            if (strcmp((char *)event.data.scalar.value, option_sections[i]) == 0) {
-                                in_option_section = i;
-                                snprintf(log_msg, sizeof(log_msg), "Entering option section %d: %s", 
-                                         i, option_sections[i]);
-                                log_error(log_msg);
-                                break;
-                            }
+            if (!in_prompt && current_option == -1 && !in_options_seq) {
+                if (strcmp(value, "prompt") == 0) {
+                    in_prompt = 1;
+                } else {
+                    for (int i = 0; i < option_count; i++) {
+                        if (strcmp(value, options_list[i]) == 0) {
+                            current_option = i;
+                            break;
                         }
                     }
-                } else if (in_prompt && !in_options_seq) {
-                    if (strcmp((char *)event.data.scalar.value, "title") == 0) {
-                        yaml_parser_parse(&parser, &event);
-                        strncpy(config->title, (char *)event.data.scalar.value, sizeof(config->title) - 1);
-                        snprintf(log_msg, sizeof(log_msg), "Set title: %s", config->title);
-                        log_error(log_msg);
-                        yaml_event_delete(&event);
-                    } else if (strcmp((char *)event.data.scalar.value, "timeout") == 0) {
-                        yaml_parser_parse(&parser, &event);
-                        config->timeout = atoi((char *)event.data.scalar.value);
-                        snprintf(log_msg, sizeof(log_msg), "Set timeout: %d", config->timeout);
-                        log_error(log_msg);
-                        yaml_event_delete(&event);
-                    } else if (strcmp((char *)event.data.scalar.value, "options") == 0) {
-                        // Next event will be sequence start
-                    }
-                } else if (in_options_seq && option_count < MAX_OPTIONS) {
-                    strncpy(option_sections[option_count], (char *)event.data.scalar.value, 
-                            sizeof(option_sections[option_count]) - 1);
-                    snprintf(log_msg, sizeof(log_msg), "Added option section %d: %s", 
-                             option_count, option_sections[option_count]);
-                    log_error(log_msg);
-                    option_count++;
-                } else if (in_option_section >= 0) {
-                    if (strcmp((char *)event.data.scalar.value, "type") == 0) {
-                        yaml_parser_parse(&parser, &event);
-                        yaml_event_delete(&event); // Skip type value
-                    } else if (strcmp((char *)event.data.scalar.value, "options") == 0) {
-                        // Next event will be mapping start
-                    } else if (strcmp((char *)event.data.scalar.value, "label") == 0) {
-                        yaml_parser_parse(&parser, &event);
-                        strncpy(config->options[in_option_section].label, (char *)event.data.scalar.value, 
-                                sizeof(config->options[in_option_section].label) - 1);
-                        snprintf(log_msg, sizeof(log_msg), "Set label for %s: %s", 
-                                 option_sections[in_option_section], config->options[in_option_section].label);
-                        log_error(log_msg);
-                        config->num_options = in_option_section + 1 > config->num_options ? 
-                                              in_option_section + 1 : config->num_options;
-                        yaml_event_delete(&event);
-                    } else if (strcmp((char *)event.data.scalar.value, "cmd") == 0) {
-                        yaml_parser_parse(&parser, &event);
-                        strncpy(config->options[in_option_section].cmd, (char *)event.data.scalar.value, 
-                                sizeof(config->options[in_option_section].cmd) - 1);
-                        snprintf(log_msg, sizeof(log_msg), "Set cmd for %s: %s", 
-                                 option_sections[in_option_section], config->options[in_option_section].cmd);
-                        log_error(log_msg);
-                        yaml_event_delete(&event);
-                    }
                 }
-                break;
-            default:
-                break;
+            } else if (in_prompt && !in_options_seq) {
+                if (strcmp(value, "title") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    strncpy(config->title, (char *)event.data.scalar.value, sizeof(config->title) - 1);
+                    yaml_event_delete(&event);
+                } else if (strcmp(value, "timeout") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    config->timeout = atoi((char *)event.data.scalar.value);
+                    yaml_event_delete(&event);
+                }
+            } else if (in_options_seq && option_count < MAX_OPTIONS) {
+                strncpy(options_list[option_count++], value, 50);
+            } else if (current_option >= 0) {
+                if (strcmp(value, "type") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    yaml_event_delete(&event);
+                } else if (strcmp(value, "options") == 0) {
+                    // Skip this one
+                } else if (strcmp(value, "label") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    strncpy(config->options[current_option].label, (char *)event.data.scalar.value, 50);
+                    config->num_options = current_option + 1 > config->num_options ? 
+                                          current_option + 1 : config->num_options;
+                    yaml_event_delete(&event);
+                } else if (strcmp(value, "cmd") == 0) {
+                    yaml_parser_parse(&parser, &event);
+                    strncpy(config->options[current_option].cmd, (char *)event.data.scalar.value, MAX_LINE);
+                    yaml_event_delete(&event);
+                }
+            }
         }
         yaml_event_delete(&event);
     }
 
     yaml_parser_delete(&parser);
     fclose(file);
-    snprintf(log_msg, sizeof(log_msg), "Parsed %d options", config->num_options);
-    log_error(log_msg);
+
     if (config->num_options == 0) {
         log_error("No valid options found in YAML");
         free(config->options);
@@ -236,17 +190,20 @@ int parse_yaml(const char *filename, Config *config) {
 }
 
 int main() {
-    Config config = { .title = "Bootloader", .timeout = 10, .options = NULL, .num_options = 0 };
-    char config_path[256];
-    snprintf(config_path, sizeof(config_path), "%s/.config/bootloader/bootloader.yaml", getenv("HOME"));
+    Config config = { "Bootloader", 10, NULL, 0 };
+    char path[256];
+    snprintf(path, sizeof(path), "%s/.config/bootloader/bootloader.yaml", getenv("HOME"));
 
-    if (parse_yaml(config_path, &config) != 0) {
+    if (parse_yaml(path, &config) != 0) {
         log_error("Falling back to default config due to YAML parsing failure");
         config.num_options = 3;
-        config.options = malloc(config.num_options * sizeof(Option));
-        strcpy(config.options[0].label, "Fedora 41 (aarch64)"); strcpy(config.options[0].cmd, "bash $HOME/.config/startx");
-        strcpy(config.options[1].label, "Fedora root shell(fallback)"); strcpy(config.options[1].cmd, "pd sh fedora");
-        strcpy(config.options[2].label, "Turn Off Computer"); strcpy(config.options[2].cmd, "pkill -f termux");
+        config.options = malloc(3 * sizeof(Option));
+        strcpy(config.options[0].label, "Fedora 41 (aarch64)");
+        strcpy(config.options[0].cmd, "bash $HOME/.config/startx");
+        strcpy(config.options[1].label, "Fedora root shell(fallback)");
+        strcpy(config.options[1].cmd, "pd sh fedora");
+        strcpy(config.options[2].label, "Turn Off Computer");
+        strcpy(config.options[2].cmd, "pkill -f termux");
     }
 
     initscr();
@@ -266,18 +223,14 @@ int main() {
         draw_menu(rows, cols, cursor, &config, remaining);
         int ch = getch();
         if (ch != ERR) {
-            switch (ch) {
-                case KEY_UP:
-                    if (cursor > 0) cursor--;
-                    end_time = time(NULL) + config.timeout;
-                    break;
-                case KEY_DOWN:
-                    if (cursor < config.num_options - 1) cursor++;
-                    end_time = time(NULL) + config.timeout;
-                    break;
-                case '\n':
-                    execute_command(cursor, &config);
-                    break;
+            if (ch == KEY_UP && cursor > 0) {
+                cursor--;
+                end_time = time(NULL) + config.timeout;
+            } else if (ch == KEY_DOWN && cursor < config.num_options - 1) {
+                cursor++;
+                end_time = time(NULL) + config.timeout;
+            } else if (ch == '\n') {
+                execute_command(cursor, &config);
             }
         }
     }
