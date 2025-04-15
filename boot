@@ -107,4 +107,4 @@ run_startup
 
 # Launch proot in the background and start the display manager
 (sleep 1 && bash "$HOME/.config/bootloader/proot" > /dev/null 2>&1) &
-env dm
+env display_manager
