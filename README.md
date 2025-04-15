@@ -13,7 +13,7 @@ A rewrite of my 'pseudo systemd bootloader bash script' to the C programming lan
 dependencies:
 ```
 pkg update && pkg upgrade
-pkg install ncurses libyaml clang make yq
+pkg install ncurses-static libyaml-static clang make yq
 ```
 
 compile:
